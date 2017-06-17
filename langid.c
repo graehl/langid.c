@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
         ++filtered;
         char const* what = detok_flag ? dbuf : text;
         fprintf(stderr, "%d (%.4f%%)\n", total, 100. * filtered / total);
-        if (reject) fprintf(reject, "%s %s", lang, what);
+        if (reject) fprintf(reject, "%d %s %s", total, lang, what);
         if (in) textlen = getline(&text, &text_size, in);
       } else {
         fputs(text, stdout);
