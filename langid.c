@@ -2,18 +2,24 @@
  * Command-line driver for liblangid
  *
  * Marco Lui <saffsd@gmail.com>, September 2014
- * Jonathan Graehl <graehl@gmail.com, 2017 - filter (bitext) lines removing :
-     $ langid -d -D ____ -e en -i $2 -o $2.clean -j $1.reject < $1 > $1.clean
+ *
+ * Jonathan Graehl <graehl@gmail.com> 2017
  */
 
-#include <sys/mman.h>
 #include "liblangid.h"
+#include <sys/mman.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+char const* usagestr = "options: npdlbmv:e:i:o:g:j:D:L:\n";
+
+void usage() {
+  puts(usagestr);
+}
 
 const char* no_file = "NOSUCHFILE";
 const char* not_file = "NOTAFILE";
@@ -29,11 +35,14 @@ int fd;
 
 /* for use with getopt */
 char* model_path = NULL;
-int c, l_flag = 0, b_flag = 0, g_flag = 0;
+int c, l_flag = 0, b_flag = 0, g_flag = 0, p_flag = 0, verbose = 0;
 char* en = "en";
+LangIndex en_index = (LangIndex)-1;
 char* fin = NULL;
 char* fout = NULL;
 char* freject = NULL;
+double min_logprob = 0.1;
+double* logprobs = 0;
 FILE *in = 0, *out = 0, *reject = 0;
 
 char* detok_marker = "__LW_AT__";
@@ -41,6 +50,10 @@ unsigned len_detok_marker = 0;
 int detok_flag;
 
 void init() {
+  /* load an identifier */
+  lid = model_path ? load_identifier(model_path) : get_default_identifier();
+  logprobs = malloc(sizeof(double) * lid->num_langs);
+  en_index = get_lang_index(lid, en);
   if (detok_flag) len_detok_marker = strlen(detok_marker);
   if (fin || fout) {
     if (fin && fout) {
@@ -69,12 +82,16 @@ ssize_t detok_text() {
   return o - dbuf;
 }
 
-char const* langid() {
+LikelyLanguage langid_likely() {
   if (detok_flag) {
     ssize_t len = detok_text();
-    return identify(lid, dbuf, len);
+    return identify_likely_logprobs(lid, dbuf, len, logprobs);
   } else
-    return identify(lid, text, textlen);
+    return identify_likely_logprobs(lid, text, textlen, logprobs);
+}
+
+char const* langid() {
+  return lang = identify(lid, text, textlen);
 }
 
 int main(int argc, char** argv) {
@@ -90,7 +107,18 @@ int main(int argc, char** argv) {
    * m: load a model file
    */
 
-  while ((c = getopt(argc, argv, "dlbm:e:i:o:g:j:D:")) != -1) switch (c) {
+  while ((c = getopt(argc, argv, "hpdlbmv:e:i:o:g:j:D:L:")) != -1) switch (c) {
+      case 'h': usage(); return 0;
+      case 'v': verbose = atoi(optarg); break;
+      case 'p':
+        p_flag = 1;
+        g_flag = 1;
+        break;
+      case 'L':
+        min_logprob = strtod(optarg, NULL);
+        p_flag = 1;
+        g_flag = 1;
+        break;
       case 'D':
         detok_marker = optarg;
         detok_flag = 1;
@@ -130,9 +158,6 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  /* load an identifier */
-  lid = model_path ? load_identifier(model_path) : get_default_identifier();
-
   /* enter appropriate operating mode.
    * we have an interactive mode determined by isatty, and then
    * the three modes are file-mode (default), line-mode and batch-mode
@@ -142,17 +167,22 @@ int main(int argc, char** argv) {
   if (g_flag) {
     unsigned filtered = 0, total = 0;
     while ((textlen = getline(&text, &text_size, stdin)) != -1) {
-      lang = langid();
       ++total;
-      if (strcmp(lang, en)) {
-        ++filtered;
-        char const* what = detok_flag ? dbuf : text;
-        fprintf(stderr, "%d (%.4f%%)\n", total, 100. * filtered / total);
-        if (reject) fprintf(reject, "%d %s %s", total, lang, what);
-        if (in) textlen = getline(&text, &text_size, in);
-      } else {
+      LikelyLanguage likely = langid_likely();
+      normalize_logprobs_n(logprobs, lid->num_langs);
+      double lpper = logprobs[en_index];
+      if (textlen) lpper /= textlen;
+      if (textlen && (likely.i == en_index || (p_flag ? lpper >= min_logprob : 0))) {
+        if (verbose >= 1)
+          fprintf(stderr, "%d %s %s=%.2f (/%d)\n", total, likely.lang, en, lpper, (unsigned)textlen);
         fputs(text, stdout);
         if (in && getline(&text, &text_size, in) != -1) fputs(text, out);
+      } else {
+        ++filtered;
+        char const* what = detok_flag ? dbuf : text;
+        fprintf(stderr, "%d %s=%.2f (%.4f%%)\n", total, en, lpper, 100. * filtered / total);
+        if (reject) fprintf(reject, "%s %f %s", likely.lang, lpper, what);
+        if (in) textlen = getline(&text, &text_size, in);
       }
     }
   } else if (isatty(fileno(stdin))) {

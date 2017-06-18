@@ -1,15 +1,15 @@
 /*
  * Implementation of the Language Identification method of Lui & Baldwin 2011
- * in pure C, based largely on langid.py, using the sparse set structures suggested
- * by Dawid Weiss.
+ * in pure C, based largely on langid.py, using the sparse set structures
+ * suggested by Dawid Weiss.
  *
  * Marco Lui <saffsd@gmail.com>, July 2014
  */
 
 #include "liblangid.h"
+#include "langid.pb-c.h"
 #include "model.h"
 #include "sparseset.h"
-#include "langid.pb-c.h"
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -43,7 +43,7 @@ LanguageIdentifier* get_default_identifier(void) {
   return lid;
 }
 
-LanguageIdentifier* load_identifier(char* model_path) {
+LanguageIdentifier* load_identifier(char const* model_path) {
   Langid__LanguageIdentifier* msg;
   int fd, model_len;
   unsigned char* model_buf;
@@ -97,8 +97,8 @@ LanguageIdentifier* load_identifier(char* model_path) {
     fprintf(stderr, "  lang:%s\n", (*lid->nb_classes)[i]);
     fprintf(stderr, "  lid->nb_pc:%lf\n", (*lid->nb_pc)[i]);
     fprintf(stderr, "  msg->nb_pc:%lf\n", (msg->nb_pc)[i]);
-    /*fprintf(stderr, "  lang:%s msg->nb_pc: %lf lid->nb_pc: %lf\n", (*lid->nb_classes)+i, msg->nb_pc+i,
-     * lid->nb_pc+i);
+    /*fprintf(stderr, "  lang:%s msg->nb_pc: %lf lid->nb_pc: %lf\n",
+     * (*lid->nb_classes)+i, msg->nb_pc+i, lid->nb_pc+i);
      */
   }
 #endif
@@ -119,7 +119,7 @@ void destroy_identifier(LanguageIdentifier* lid) {
  * Convert a text stream into a feature vector. The feature vector counts
  * how many times each sequence is seen.
  */
-void text_to_fv(LanguageIdentifier* lid, char* text, int textlen, Set* sv, Set* fv) {
+void text_to_fv(LanguageIdentifier* lid, char const* text, unsigned textlen, Set* sv, Set* fv) {
   unsigned i, j, m, s = 0;
 
   clear(sv);
@@ -163,33 +163,97 @@ void fv_to_logprob(LanguageIdentifier* lid, Set* fv, double logprob[]) {
   return;
 }
 
-int logprob_to_pred(LanguageIdentifier* lid, double logprob[]) {
-  int m = 0, i;
-
-  for (i = 1; i < lid->num_langs; i++) {
-    if (logprob[m] < logprob[i]) m = i;
-  }
-
+LangIndex logprob_to_pred_n(double* logprob, LangIndex n) {
+  LangIndex m = 0, i = 1;
+  for (; i < n; ++i)
+    if (logprob[m] > logprob[i]) m = i;
   return m;
 }
 
-const char* identify(LanguageIdentifier* lid, char* text, int textlen) {
-  double lp[lid->num_langs];
-  int pred;
+LangIndex logprob_to_pred(LanguageIdentifier* lid, double* logprob) {
+  return logprob_to_pred_n(logprob, lid->num_langs);
+}
+
+void identify_logprobs(LanguageIdentifier* lid, char const* text, unsigned textlen, double* logprobs) {
 #ifdef DEBUG
   int i;
 #endif
-
   text_to_fv(lid, text, textlen, lid->sv, lid->fv);
-  fv_to_logprob(lid, lid->fv, lp);
-  pred = logprob_to_pred(lid, lp);
-
+  fv_to_logprob(lid, lid->fv, logprobs);
 #ifdef DEBUG
-  fprintf(stderr, "pred lang: %s logprob: %lf\n", (*lid->nb_classes)[pred], lp[pred]);
+  fprintf(stderr, "pred lang: %s logprob: %lf\n", (*lid->nb_classes)[pred], logprobs[pred]);
   for (i = 0; i < lid->num_langs; i++) {
-    fprintf(stderr, "  lang: %s logprob: %lf\n", (*lid->nb_classes)[i], lp[i]);
+    fprintf(stderr, "  lang: %s logprob: %lf\n", (*lid->nb_classes)[i], logprobs[i]);
   }
 #endif
+}
 
-  return (*lid->nb_classes)[pred];
+double identify_logprob(LanguageIdentifier* lid, LangIndex i, char const* text, unsigned textlen) {
+  assert(i < lid->num_langs);
+  double logprobs[lid->num_langs];
+  identify_logprobs(lid, text, textlen, logprobs);
+  return logprobs[i];
+}
+
+LangIndex identify_index(LanguageIdentifier* lid, char const* text, unsigned textlen) {
+  double logprobs[lid->num_langs];
+  identify_logprobs(lid, text, textlen, logprobs);
+  return logprob_to_pred(lid, logprobs);
+}
+
+char const* get_lang_name(LanguageIdentifier* lid, LangIndex i) {
+  assert(i < lid->num_langs);
+  return (*lid->nb_classes)[i];
+}
+
+char const* identify(LanguageIdentifier* lid, char const* text, unsigned textlen) {
+  return get_lang_name(lid, identify_index(lid, text, textlen));
+}
+
+LangIndex get_lang_index(LanguageIdentifier* lid, char const* name) {
+  char** names = (char**)(*lid->nb_classes);
+  for (LangIndex i = 0, n = lid->num_langs; i != n; ++i)
+    if (!strcmp(names[i], name)) return i;
+  return (LangIndex)-1;
+}
+
+LangIndex identify_index_logprobs(LanguageIdentifier* lid, char const* text, unsigned textlen, double* logprobs) {
+  LangIndex p;
+  assert(logprobs);
+  identify_logprobs(lid, text, textlen, logprobs);
+  p = logprob_to_pred(lid, logprobs);
+  assert(p < lid->num_langs);
+  return p;
+}
+
+LikelyLanguage identify_likely(LanguageIdentifier* lid, char const* text, unsigned textlen) {
+  double logprobs[lid->num_langs];
+  return identify_likely_logprobs(lid, text, textlen, logprobs);
+}
+
+LikelyLanguage identify_likely_logprobs(LanguageIdentifier* lid, char const* text, unsigned textlen,
+                                        double* logprobs) {
+  identify_logprobs(lid, text, textlen, logprobs);
+  return likeliest(lid, logprobs);
+}
+
+LikelyLanguage likeliest(LanguageIdentifier* lid, double* logprobs) {
+  LikelyLanguage l;
+  l.i = logprob_to_pred(lid, logprobs);
+  l.lang = (*lid->nb_classes)[l.i];
+  l.logprob = logprobs[l.i];
+  return l;
+}
+
+void normalize_logprobs_n(double* logprobs, unsigned n) {
+  double max = logprobs[0];
+  for (unsigned i = 1; i < n; ++i) {
+    double p = logprobs[i];
+    if (max < p) max = p;
+  }
+  for (unsigned i = 0; i < n; ++i) logprobs[i] -= max;
+}
+
+extern void identify_normalize_logprobs(LanguageIdentifier* lid, double* logprobs) {
+  normalize_logprobs_n(logprobs, lid->num_langs);
 }
