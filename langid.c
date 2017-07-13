@@ -19,6 +19,7 @@ char const *getoptspec = "hpdlbmv:e:i:o:gj:D:L:f:";
 
 void usage() {
   printf("Options (stdin/stdout): %s\n"
+         "\n -v N: verbose level N"
          "\n -f: input from file instead of stdin"
          "\n -l: line-mode"
          "\n -b: batch-mode"
@@ -28,7 +29,7 @@ void usage() {
          "\n -d: ignore [detok-marker] string"
          "\n -D: detok-marker"
          "\n -e: language to select; only output lines that get ided as e"
-         "\n -L: also keep lines with logprob(e) >= L"
+         "\n -L: also keep lines with per-token logprob(e) - logprob(most likely) >= L, i.e. L<0 means tolerate 2nd place"
          "\n -j: rejected lines go here"
          "\n -o: filtered -j output filename (-i goes to stdout)"
          "\n\n",
@@ -57,7 +58,7 @@ char *fstdin = NULL;
 char *fin = NULL;
 char *fout = NULL;
 char *freject = NULL;
-double min_logprob = 0.1;
+double min_logprob = -0.1;
 double *logprobs = 0;
 FILE *detectin = 0;
 FILE *in = 0, *out = 0, *reject = 0;
