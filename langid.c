@@ -15,12 +15,13 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-char const *getoptspec = "hpdlbmv:e:i:o:gj:D:L:f:I:";
+char const *getoptspec = "hpdlbmv:e:i:o:gj:D:L:f:I:F:";
 
 void usage() {
   printf("Options (stdin/stdout): %s\n"
          "\n -v N: verbose level N"
          "\n -f: input from file instead of stdin"
+         "\n -F: output instead of stdout"
          "\n -l: line-mode"
          "\n -b: batch-mode"
          "\n -g: grep-mode - keep lines that are ided as lang -e (default en)"
@@ -59,18 +60,25 @@ char *en = "en";
 char *flang = NULL;
 LangIndex f_index = (LangIndex)-1;
 LangIndex en_index = (LangIndex)-1;
-char *fstdin = NULL;
+char *ff = NULL;
 char *fin = NULL;
 char *fout = NULL;
 char *freject = NULL;
+char *fF = NULL;
 double min_logprob = -0.1;
 double *logprobs = 0;
 FILE *detectin = 0;
+FILE *detectout = 0;
 FILE *in = 0, *out = 0, *reject = 0;
 
 char *detok_marker = "__LW_AT__";
 unsigned len_detok_marker = 0;
 int detok_flag;
+
+char gotline(FILE *in) {
+  textlen = getline(&text, &text_size, in);
+  return textlen != -1;
+}
 
 void error(char const *msg) {
   fprintf(stderr, "%s\n", msg);
@@ -94,6 +102,8 @@ void init() {
   en_index = get_lang_index(lid, en);
   if (detok_flag)
     len_detok_marker = strlen(detok_marker);
+
+  detectout = fF ? fopen(fF, "w") : stdout;
   if (fin || fout) {
     if (fin && fout) {
       in = openin(fin);
@@ -107,12 +117,8 @@ void init() {
     else
       f_index = get_lang_index(lid, flang);
   }
-  if (fstdin)
-    detectin = openin(fstdin);
-  else
-    detectin = stdin;
-  if (freject)
-    reject = fopen(freject, "w");
+  detectin = ff ? openin(ff) : stdin;
+  reject = freject ? fopen(freject, "w") : 0;
 }
 
 char *dbuf = NULL;
@@ -185,8 +191,11 @@ int main(int argc, char **argv) {
 
   while ((c = getopt(argc, argv, getoptspec)) != -1)
     switch (c) {
+    case 'F':
+      fF = optarg;
+      break;
     case 'f':
-      fstdin = optarg;
+      ff = optarg;
       break;
     case 'h':
       usage();
@@ -266,28 +275,27 @@ int main(int argc, char **argv) {
   init();
 
   if (g_flag) {
-    while ((textlen = getline(&text, &text_size, detectin)) != -1) {
+    while (gotline(detectin)) {
       ++total;
       if (likely_enough(en, en_index)) {
         if (in) {
-          fputs(text, stdout);
-          if (getline(&text, &text_size, in) != -1) {
-            if (likely_enough(flang, f_index)) {
+          fputs(text, detectout);
+          if (gotline(in)) {
+            if (likely_enough(flang, f_index))
               fputs(text, out);
-            } else
-              error("-i file had too few lines");
-          }
+          } else
+            error("-i file had too few lines");
         } else
-          fputs(text, stdout);
+          fputs(text, detectout);
       } else if (in)
-        textlen = getline(&text, &text_size, in);
+        gotline(in);
     }
   } else if (isatty(fileno(detectin))) {
     printf("langid.c interactive mode.\n");
 
     for (;;) {
       printf(">>> ");
-      textlen = getline(&text, &text_size, detectin);
+      gotline(detectin);
       if (textlen == 1 || textlen == -1)
         break; /* -1 for EOF and 1 for only newline */
       lang = langid();
@@ -298,7 +306,7 @@ int main(int argc, char **argv) {
 
   } else if (l_flag) { /*line mode*/
 
-    while ((textlen = getline(&text, &text_size, detectin)) != -1) {
+    while (gotline(detectin)) {
       lang = langid();
       printf("%s,%zd\n", lang, textlen);
     }
@@ -306,8 +314,8 @@ int main(int argc, char **argv) {
   } else if (b_flag) { /*batch mode*/
 
     /* loop on detectin, interpreting each line as a path */
-    while ((pathlen = getline(&path, &path_size, detectin)) != -1) {
-      path[pathlen - 1] = '\0';
+    while (gotline(detectin)) {
+      path[textlen - 1] = '\0';
       /* TODO: ensure that path is a real file.
        * the main issue is with directories I think, no problem reading from a
        * pipe or socket presumably. Anything that returns data should be fair
