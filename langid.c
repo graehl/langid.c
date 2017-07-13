@@ -15,10 +15,21 @@
 #include <string.h>
 #include <unistd.h>
 
-char const* usagestr = "options: npdlbmv:e:i:o:g:j:D:L:\n";
+char const* getoptspec = "hpdlbmv:e:i:o:gj:D:L:";
 
 void usage() {
-  puts(usagestr);
+  printf("Options: %s\n"
+         "\n -i: input file default stdin"
+         "\n -l: line-mode"
+         "\n -b: batch-mode"
+         "\n -g: grep-mode - keep lines that are ided as lang -e (default en)"
+         "\n -m: load model file"
+         "\n -d: ignore [detok-marker] string"
+         "\n -D: detok-marker"
+         "\n -e: language to select; only output lines that get ided as e"
+         "\n -L: also keep lines with logprob(e) >= L"
+         "\n -j: parallel lines input file that gets the same lines filtered"
+         "\n\n", getoptspec);
 }
 
 const char* no_file = "NOSUCHFILE";
@@ -107,7 +118,7 @@ int main(int argc, char** argv) {
    * m: load a model file
    */
 
-  while ((c = getopt(argc, argv, "hpdlbmv:e:i:o:g:j:D:L:")) != -1) switch (c) {
+  while ((c = getopt(argc, argv, getoptspec)) != -1) switch (c) {
       case 'h': usage(); return 0;
       case 'v': verbose = atoi(optarg); break;
       case 'p':
