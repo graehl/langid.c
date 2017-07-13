@@ -15,7 +15,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-char const *getoptspec = "hpdlbmv:e:i:o:gj:D:L:f:";
+char const *getoptspec = "hpdlbmv:e:i:o:gj:D:L:f:I:";
 
 void usage() {
   printf("Options (stdin/stdout): %s\n"
@@ -30,7 +30,7 @@ void usage() {
          "\n -d: ignore [detok-marker] string"
          "\n -D: detok-marker"
          "\n -e: language to select; only output lines that get ided as e"
-         "\n -f: if set, language to select for -i file (in addition to -e "
+         "\n -I: if set, language to select for -i file (in addition to -e "
          "selection criteria on -f/stdin)"
          "\n -L: also keep lines with per-token logprob(e) - logprob(most "
          "likely) >= L, i.e. L<0 means tolerate 2nd place"
@@ -224,6 +224,9 @@ int main(int argc, char **argv) {
     case 'i':
       g_flag = 1;
       fin = optarg;
+      break;
+    case 'I':
+      flang = optarg;
       break;
     case 'o':
       fout = optarg;
