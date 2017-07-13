@@ -168,7 +168,7 @@ char likely_enough(char const *lang, unsigned lang_index) {
   else {
     ++filtered;
     char const *what = detok_flag ? dbuf : text;
-    fprintf(stderr, "%d %s=%.2f (%.4f%%)\n", total, en, lpper,
+    fprintf(stderr, "%d %s=%.2f (%.4f%%)\n", total, lang, lpper,
             100. * filtered / total);
     if (reject)
       fprintf(reject, "%s!=%s %f %s", likely.lang, lang, lpper, what);
