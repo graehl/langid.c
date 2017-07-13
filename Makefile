@@ -1,6 +1,6 @@
 MODEL := ldpy.model
-#CFLAGS := -Os -Wall
-CFLAGS := -g -O0 -Wall -DDEBUG
+CFLAGS := -Os -Wall
+#CFLAGS := -g -O0 -Wall -DDEBUG
 LDLIBS:= -lprotobuf-c
 
 OBJS:=liblangid model sparseset langid.pb-c
