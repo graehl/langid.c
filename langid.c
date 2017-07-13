@@ -7,85 +7,109 @@
  */
 
 #include "liblangid.h"
-#include <sys/mman.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
-char const* getoptspec = "hpdlbmv:e:i:o:gj:D:L:";
+char const *getoptspec = "hpdlbmv:e:i:o:gj:D:L:f:";
 
 void usage() {
-  printf("Options: %s\n"
-         "\n -i: input file default stdin"
+  printf("Options (stdin/stdout): %s\n"
+         "\n -f: input from file instead of stdin"
          "\n -l: line-mode"
          "\n -b: batch-mode"
          "\n -g: grep-mode - keep lines that are ided as lang -e (default en)"
+         "\n -i: additional input file (same lines get filtered) for grep-mode"
          "\n -m: load model file"
          "\n -d: ignore [detok-marker] string"
          "\n -D: detok-marker"
          "\n -e: language to select; only output lines that get ided as e"
          "\n -L: also keep lines with logprob(e) >= L"
-         "\n -j: parallel lines input file that gets the same lines filtered"
-         "\n\n", getoptspec);
+         "\n -j: rejected lines go here"
+         "\n -o: filtered -j output filename (-i goes to stdout)"
+         "\n\n",
+         getoptspec);
 }
 
-const char* no_file = "NOSUCHFILE";
-const char* not_file = "NOTAFILE";
+const char *no_file = "NOSUCHFILE";
+const char *not_file = "NOTAFILE";
 
-const char* lang;
+const char *lang;
 size_t path_size = 4096, text_size = 4096;
 ssize_t pathlen, textlen;
-char *path = NULL, *text = NULL; /* NULL init required for use with getline/getdelim*/
-LanguageIdentifier* lid;
+char *path = NULL,
+     *text = NULL; /* NULL init required for use with getline/getdelim*/
+LanguageIdentifier *lid;
 
 /* for use while accessing files through mmap*/
 int fd;
 
 /* for use with getopt */
-char* model_path = NULL;
+char *model_path = NULL;
 int c, l_flag = 0, b_flag = 0, g_flag = 0, p_flag = 0, verbose = 0;
-char* en = "en";
+char *en = "en";
 LangIndex en_index = (LangIndex)-1;
-char* fin = NULL;
-char* fout = NULL;
-char* freject = NULL;
+char *fstdin = NULL;
+char *fin = NULL;
+char *fout = NULL;
+char *freject = NULL;
 double min_logprob = 0.1;
-double* logprobs = 0;
+double *logprobs = 0;
+FILE *detectin = 0;
 FILE *in = 0, *out = 0, *reject = 0;
 
-char* detok_marker = "__LW_AT__";
+char *detok_marker = "__LW_AT__";
 unsigned len_detok_marker = 0;
 int detok_flag;
+
+FILE *openin(char const *name) {
+  FILE *r = fopen(name, "r");
+  if (r)
+    return r;
+  else {
+    fprintf(stderr, "ERROR: couldn't open '%s'\n", name);
+    exit(-1);
+  }
+}
 
 void init() {
   /* load an identifier */
   lid = model_path ? load_identifier(model_path) : get_default_identifier();
   logprobs = malloc(sizeof(double) * lid->num_langs);
   en_index = get_lang_index(lid, en);
-  if (detok_flag) len_detok_marker = strlen(detok_marker);
+  if (detok_flag)
+    len_detok_marker = strlen(detok_marker);
   if (fin || fout) {
     if (fin && fout) {
-      in = fopen(fin, "r");
+      in = openin(fin);
       out = fopen(fout, "w");
     } else
       exit(-1);
   }
-  if (freject) reject = fopen(freject, "w");
+  if (fstdin)
+    detectin = openin(fstdin);
+  else
+    detectin = stdin;
+  if (freject)
+    reject = fopen(freject, "w");
 }
 
-char* dbuf = NULL;
+char *dbuf = NULL;
 ssize_t detok_text() {
-  char* s = text;
+  char *s = text;
   dbuf = realloc(dbuf, textlen + 1);
-  char* o = dbuf;
+  char *o = dbuf;
   while (*s) {
     if (!strncmp(detok_marker, s, len_detok_marker)) {
-      if (s != text && s[-1] == ' ') --o;
+      if (s != text && s[-1] == ' ')
+        --o;
       s += len_detok_marker;
-      if (*s == ' ') ++s;
+      if (*s == ' ')
+        ++s;
     } else
       *o++ = *s++;
   }
@@ -101,11 +125,9 @@ LikelyLanguage langid_likely() {
     return identify_likely_logprobs(lid, text, textlen, logprobs);
 }
 
-char const* langid() {
-  return lang = identify(lid, text, textlen);
-}
+char const *langid() { return lang = identify(lid, text, textlen); }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   opterr = 0;
 
 #ifdef DEBUG
@@ -118,49 +140,70 @@ int main(int argc, char** argv) {
    * m: load a model file
    */
 
-  while ((c = getopt(argc, argv, getoptspec)) != -1) switch (c) {
-      case 'h': usage(); return 0;
-      case 'v': verbose = atoi(optarg); break;
-      case 'p':
-        p_flag = 1;
-        g_flag = 1;
-        break;
-      case 'L':
-        min_logprob = strtod(optarg, NULL);
-        p_flag = 1;
-        g_flag = 1;
-        break;
-      case 'D':
-        detok_marker = optarg;
-        detok_flag = 1;
-        break;
-      case 'd': detok_flag = 1; break;
-      case 'g': g_flag = 1; break;
-      case 'j':
-        g_flag = 1;
-        freject = optarg;
-        break;
-      case 'e':
-        g_flag = 1;
-        en = optarg;
-        break;
-      case 'i':
-        g_flag = 1;
-        fin = optarg;
-        break;
-      case 'o': fout = optarg; break;
-      case 'l': l_flag = 1; break;
-      case 'b': b_flag = 1; break;
-      case 'm': model_path = optarg; break;
-      case '?':
-        if (optopt == 'm')
-          fprintf(stderr, "Option -%c requires an argument.\n", optopt);
-        else if (isprint(optopt))
-          fprintf(stderr, "Unknown option `-%c'.\n", optopt);
-        else
-          fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
-        return 1;
-      default: abort();
+  while ((c = getopt(argc, argv, getoptspec)) != -1)
+    switch (c) {
+    case 'f':
+      fstdin = optarg;
+      break;
+    case 'h':
+      usage();
+      return 0;
+    case 'v':
+      verbose = atoi(optarg);
+      break;
+    case 'p':
+      p_flag = 1;
+      g_flag = 1;
+      break;
+    case 'L':
+      min_logprob = strtod(optarg, NULL);
+      p_flag = 1;
+      g_flag = 1;
+      break;
+    case 'D':
+      detok_marker = optarg;
+      detok_flag = 1;
+      break;
+    case 'd':
+      detok_flag = 1;
+      break;
+    case 'g':
+      g_flag = 1;
+      break;
+    case 'j':
+      g_flag = 1;
+      freject = optarg;
+      break;
+    case 'e':
+      g_flag = 1;
+      en = optarg;
+      break;
+    case 'i':
+      g_flag = 1;
+      fin = optarg;
+      break;
+    case 'o':
+      fout = optarg;
+      break;
+    case 'l':
+      l_flag = 1;
+      break;
+    case 'b':
+      b_flag = 1;
+      break;
+    case 'm':
+      model_path = optarg;
+      break;
+    case '?':
+      if (optopt == 'm')
+        fprintf(stderr, "Option -%c requires an argument.\n", optopt);
+      else if (isprint(optopt))
+        fprintf(stderr, "Unknown option `-%c'.\n", optopt);
+      else
+        fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
+      return 1;
+    default:
+      abort();
     }
 
   /* validate getopt options */
@@ -175,34 +218,43 @@ int main(int argc, char** argv) {
    */
 
   init();
+
   if (g_flag) {
     unsigned filtered = 0, total = 0;
-    while ((textlen = getline(&text, &text_size, stdin)) != -1) {
+    while ((textlen = getline(&text, &text_size, detectin)) != -1) {
       ++total;
       LikelyLanguage likely = langid_likely();
       normalize_logprobs_n(logprobs, lid->num_langs);
       double lpper = logprobs[en_index];
-      if (textlen) lpper /= textlen;
-      if (textlen && (likely.i == en_index || (p_flag ? lpper >= min_logprob : 0))) {
+      if (textlen)
+        lpper /= textlen;
+      if (textlen &&
+          (likely.i == en_index || (p_flag ? lpper >= min_logprob : 0))) {
         if (verbose >= 1)
-          fprintf(stderr, "%d %s %s=%.2f (/%d)\n", total, likely.lang, en, lpper, (unsigned)textlen);
+          fprintf(stderr, "%d %s %s=%.2f (/%d)\n", total, likely.lang, en,
+                  lpper, (unsigned)textlen);
         fputs(text, stdout);
-        if (in && getline(&text, &text_size, in) != -1) fputs(text, out);
+        if (in && getline(&text, &text_size, in) != -1)
+          fputs(text, out);
       } else {
         ++filtered;
-        char const* what = detok_flag ? dbuf : text;
-        fprintf(stderr, "%d %s=%.2f (%.4f%%)\n", total, en, lpper, 100. * filtered / total);
-        if (reject) fprintf(reject, "%s %f %s", likely.lang, lpper, what);
-        if (in) textlen = getline(&text, &text_size, in);
+        char const *what = detok_flag ? dbuf : text;
+        fprintf(stderr, "%d %s=%.2f (%.4f%%)\n", total, en, lpper,
+                100. * filtered / total);
+        if (reject)
+          fprintf(reject, "%s %f %s", likely.lang, lpper, what);
+        if (in)
+          textlen = getline(&text, &text_size, in);
       }
     }
-  } else if (isatty(fileno(stdin))) {
+  } else if (isatty(fileno(detectin))) {
     printf("langid.c interactive mode.\n");
 
     for (;;) {
       printf(">>> ");
-      textlen = getline(&text, &text_size, stdin);
-      if (textlen == 1 || textlen == -1) break; /* -1 for EOF and 1 for only newline */
+      textlen = getline(&text, &text_size, detectin);
+      if (textlen == 1 || textlen == -1)
+        break; /* -1 for EOF and 1 for only newline */
       lang = langid();
       printf("%s,%zd\n", lang, textlen);
     }
@@ -211,15 +263,15 @@ int main(int argc, char** argv) {
 
   } else if (l_flag) { /*line mode*/
 
-    while ((textlen = getline(&text, &text_size, stdin)) != -1) {
+    while ((textlen = getline(&text, &text_size, detectin)) != -1) {
       lang = langid();
       printf("%s,%zd\n", lang, textlen);
     }
 
   } else if (b_flag) { /*batch mode*/
 
-    /* loop on stdin, interpreting each line as a path */
-    while ((pathlen = getline(&path, &path_size, stdin)) != -1) {
+    /* loop on detectin, interpreting each line as a path */
+    while ((pathlen = getline(&path, &path_size, detectin)) != -1) {
       path[pathlen - 1] = '\0';
       /* TODO: ensure that path is a real file.
        * the main issue is with directories I think, no problem reading from a
@@ -229,12 +281,14 @@ int main(int argc, char** argv) {
         lang = no_file;
       } else {
         textlen = lseek(fd, 0, SEEK_END);
-        text = (char*)mmap(NULL, textlen, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+        text = (char *)mmap(NULL, textlen, PROT_READ | PROT_WRITE, MAP_PRIVATE,
+                            fd, 0);
         lang = langid();
 
         /* no need to munmap if textlen is 0 */
         if (textlen && (munmap(text, textlen) == -1)) {
-          fprintf(stderr, "failed to munmap %s of length %zd \n", path, textlen);
+          fprintf(stderr, "failed to munmap %s of length %zd \n", path,
+                  textlen);
           exit(-1);
         }
 
@@ -245,15 +299,17 @@ int main(int argc, char** argv) {
 
   } else { /*file mode*/
 
-    /* read all of stdin and process as a single file */
-    textlen = getdelim(&text, &text_size, EOF, stdin);
+    /* read all of detectin and process as a single file */
+    textlen = getdelim(&text, &text_size, EOF, detectin);
     lang = langid();
     printf("%s,%zd\n", lang, textlen);
     free(text);
   }
 
   destroy_identifier(lid);
-  if (reject) fclose(reject);
-  if (out) fclose(out);
+  if (reject)
+    fclose(reject);
+  if (out)
+    fclose(out);
   return 0;
 }

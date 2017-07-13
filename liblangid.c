@@ -166,7 +166,7 @@ void fv_to_logprob(LanguageIdentifier* lid, Set* fv, double logprob[]) {
 LangIndex logprob_to_pred_n(double* logprob, LangIndex n) {
   LangIndex m = 0, i = 1;
   for (; i < n; ++i)
-    if (logprob[m] > logprob[i]) m = i;
+    if (logprob[i] > logprob[m]) m = i;
   return m;
 }
 
@@ -181,10 +181,8 @@ void identify_logprobs(LanguageIdentifier* lid, char const* text, unsigned textl
   text_to_fv(lid, text, textlen, lid->sv, lid->fv);
   fv_to_logprob(lid, lid->fv, logprobs);
 #ifdef DEBUG
-  fprintf(stderr, "pred lang: %s logprob: %lf\n", (*lid->nb_classes)[pred], logprobs[pred]);
-  for (i = 0; i < lid->num_langs; i++) {
+  for (i = 0; i < lid->num_langs; i++)
     fprintf(stderr, "  lang: %s logprob: %lf\n", (*lid->nb_classes)[i], logprobs[i]);
-  }
 #endif
 }
 
