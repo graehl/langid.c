@@ -25,13 +25,16 @@ void usage() {
          "\n -b: batch-mode"
          "\n -g: grep-mode - keep lines that are ided as lang -e (default en)"
          "\n -i: additional input file (same lines get filtered) for grep-mode"
+         "\n -o: filtered -i output filename - mandatory if -i"
          "\n -m: load model file"
          "\n -d: ignore [detok-marker] string"
          "\n -D: detok-marker"
          "\n -e: language to select; only output lines that get ided as e"
-         "\n -L: also keep lines with per-token logprob(e) - logprob(most likely) >= L, i.e. L<0 means tolerate 2nd place"
+         "\n -f: if set, language to select for -i file (in addition to -e "
+         "selection criteria on -f/stdin)"
+         "\n -L: also keep lines with per-token logprob(e) - logprob(most "
+         "likely) >= L, i.e. L<0 means tolerate 2nd place"
          "\n -j: rejected lines go here"
-         "\n -o: filtered -j output filename (-i goes to stdout)"
          "\n\n",
          getoptspec);
 }
@@ -53,6 +56,8 @@ int fd;
 char *model_path = NULL;
 int c, l_flag = 0, b_flag = 0, g_flag = 0, p_flag = 0, verbose = 0;
 char *en = "en";
+char *flang = NULL;
+LangIndex f_index = (LangIndex)-1;
 LangIndex en_index = (LangIndex)-1;
 char *fstdin = NULL;
 char *fin = NULL;
@@ -66,6 +71,11 @@ FILE *in = 0, *out = 0, *reject = 0;
 char *detok_marker = "__LW_AT__";
 unsigned len_detok_marker = 0;
 int detok_flag;
+
+void error(char const *msg) {
+  fprintf(stderr, "%s\n", msg);
+  exit(-1);
+}
 
 FILE *openin(char const *name) {
   FILE *r = fopen(name, "r");
@@ -90,6 +100,12 @@ void init() {
       out = fopen(fout, "w");
     } else
       exit(-1);
+  }
+  if (flang) {
+    if (!fin)
+      error("must specify -i file for -f [language-id e.g. de]");
+    else
+      f_index = get_lang_index(lid, flang);
   }
   if (fstdin)
     detectin = openin(fstdin);
@@ -127,6 +143,32 @@ LikelyLanguage langid_likely() {
 }
 
 char const *langid() { return lang = identify(lid, text, textlen); }
+
+unsigned filtered = 0, total = 0;
+char likely_enough(char const *lang, unsigned lang_index) {
+  if (lang_index == (unsigned)-1)
+    return 1;
+  assert(lang);
+  LikelyLanguage likely = langid_likely();
+  normalize_logprobs_n(logprobs, lid->num_langs);
+  double lpper = logprobs[lang_index];
+  if (textlen)
+    lpper /= textlen;
+  char enough = textlen &&
+                (likely.i == lang_index || (p_flag ? lpper >= min_logprob : 0));
+  if (enough && verbose >= 1)
+    fprintf(stderr, "%d %s %s=%.2f (/%d)\n", total, likely.lang, lang, lpper,
+            (unsigned)textlen);
+  else {
+    ++filtered;
+    char const *what = detok_flag ? dbuf : text;
+    fprintf(stderr, "%d %s=%.2f (%.4f%%)\n", total, en, lpper,
+            100. * filtered / total);
+    if (reject)
+      fprintf(reject, "%s!=%s %f %s", likely.lang, lang, lpper, what);
+  }
+  return enough;
+}
 
 int main(int argc, char **argv) {
   opterr = 0;
@@ -221,32 +263,21 @@ int main(int argc, char **argv) {
   init();
 
   if (g_flag) {
-    unsigned filtered = 0, total = 0;
     while ((textlen = getline(&text, &text_size, detectin)) != -1) {
       ++total;
-      LikelyLanguage likely = langid_likely();
-      normalize_logprobs_n(logprobs, lid->num_langs);
-      double lpper = logprobs[en_index];
-      if (textlen)
-        lpper /= textlen;
-      if (textlen &&
-          (likely.i == en_index || (p_flag ? lpper >= min_logprob : 0))) {
-        if (verbose >= 1)
-          fprintf(stderr, "%d %s %s=%.2f (/%d)\n", total, likely.lang, en,
-                  lpper, (unsigned)textlen);
-        fputs(text, stdout);
-        if (in && getline(&text, &text_size, in) != -1)
-          fputs(text, out);
-      } else {
-        ++filtered;
-        char const *what = detok_flag ? dbuf : text;
-        fprintf(stderr, "%d %s=%.2f (%.4f%%)\n", total, en, lpper,
-                100. * filtered / total);
-        if (reject)
-          fprintf(reject, "%s %f %s", likely.lang, lpper, what);
-        if (in)
-          textlen = getline(&text, &text_size, in);
-      }
+      if (likely_enough(en, en_index)) {
+        if (in) {
+          fputs(text, stdout);
+          if (getline(&text, &text_size, in) != -1) {
+            if (likely_enough(flang, f_index)) {
+              fputs(text, out);
+            } else
+              error("-i file had too few lines");
+          }
+        } else
+          fputs(text, stdout);
+      } else if (in)
+        textlen = getline(&text, &text_size, in);
     }
   } else if (isatty(fileno(detectin))) {
     printf("langid.c interactive mode.\n");
