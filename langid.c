@@ -44,10 +44,10 @@ const char *no_file = "NOSUCHFILE";
 const char *not_file = "NOTAFILE";
 
 const char *lang;
-size_t path_size = 4096, text_size = 4096;
+size_t path_size = 4096, text_size = 4096, text_size2;
 ssize_t pathlen, textlen;
-char *path = NULL,
-     *text = NULL; /* NULL init required for use with getline/getdelim*/
+char *path = NULL, *text = NULL,
+     *text2 = NULL; /* NULL init required for use with getline/getdelim*/
 LanguageIdentifier *lid;
 
 /* for use while accessing files through mmap*/
@@ -278,15 +278,27 @@ int main(int argc, char **argv) {
     while (gotline(detectin)) {
       ++total;
       if (likely_enough(en, en_index)) {
-        if (in) {
+        if (!in)
           fputs(text, detectout);
+        else {
+          char *text2_ = text2;
+          size_t text_size2_ = text_size2;
+          text2 = text;
+          text = text2_;
+          text_size2 = text_size;
+          text_size = text_size2_;
           if (gotline(in)) {
-            if (likely_enough(flang, f_index))
+            if (likely_enough(flang, f_index)) {
+              fputs(text2, detectout);
               fputs(text, out);
+            }
           } else
             error("-i file had too few lines");
-        } else
-          fputs(text, detectout);
+          text = text2;
+          text2 = text2_;
+          text_size = text_size2;
+          text_size2 = text_size2_;
+        }
       } else if (in)
         gotline(in);
     }
